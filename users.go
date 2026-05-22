@@ -76,6 +76,7 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 	type LoginRequest struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
+		Expires  int    `json:"expires_in_seconds"`
 	}
 	var loginRequest LoginRequest
 
@@ -112,17 +113,31 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// generate JWT
+	var expiresIn time.Duration
+	if 0 < loginRequest.Expires && loginRequest.Expires < 3600 {
+		expiresIn = time.Duration(loginRequest.Expires) * time.Second
+	} else {
+		expiresIn = time.Hour
+	}
+	token, err := auth.MakeJWT(user.ID, cfg.jwtSecret, expiresIn)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error creating JWT", err)
+	}
+
 	// respond with user information
 	userInfo := struct {
 		ID        uuid.UUID `json:"id"`
 		CreatedAt time.Time `json:"created_at"`
 		UpdatedAt time.Time `json:"updated_at"`
 		Email     string    `json:"email"`
+		Token     string    `json:"token"`
 	}{
 		ID:        user.ID,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email:     user.Email,
+		Token:     token,
 	}
 	respondWithJSON(w, http.StatusOK, userInfo)
 }

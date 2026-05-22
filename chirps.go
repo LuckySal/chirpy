@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/luckysal/chirpy/internal/auth"
 	"github.com/luckysal/chirpy/internal/database"
 )
 
@@ -23,6 +24,18 @@ type Chirp struct {
 // post a chirp to the database
 // requires json body and user_id
 func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
+	// validate JWT
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "missing JWT", err)
+		return
+	}
+	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "invalid JWT", err)
+		return
+	}
+
 	// constants
 	const MAX_CHIRP_LENGTH = 140
 	BANNED_WORDS := map[string]struct{}{
@@ -33,8 +46,7 @@ func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 
 	// decode request body
 	type input struct {
-		Body   string    `json:"body"`
-		UserID uuid.UUID `json:"user_id"`
+		Body string `json:"body"`
 	}
 	var newChirp input
 	decoder := json.NewDecoder(r.Body)
@@ -44,8 +56,8 @@ func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// validate request body
-	if newChirp.Body == "" || newChirp.UserID == uuid.Nil {
-		respondWithError(w, http.StatusBadRequest, "Chirps require a body and a user_id", nil)
+	if newChirp.Body == "" {
+		respondWithError(w, http.StatusBadRequest, "Chirps require a body", nil)
 		return
 	}
 	if len(newChirp.Body) > MAX_CHIRP_LENGTH {
@@ -57,7 +69,7 @@ func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 	cleanedBody := cleanMessage(newChirp.Body, BANNED_WORDS)
 	params := database.CreateChirpParams{
 		Body:   cleanedBody,
-		UserID: newChirp.UserID,
+		UserID: userID,
 	}
 
 	// save to database
