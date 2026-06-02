@@ -27,12 +27,12 @@ func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 	// validate JWT
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "missing JWT", err)
+		respondWithError(w, http.StatusUnauthorized, "invalid or expired access token", err)
 		return
 	}
 	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "invalid JWT", err)
+		respondWithError(w, http.StatusUnauthorized, "invalid or expired access token", err)
 		return
 	}
 
@@ -51,7 +51,8 @@ func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 	var newChirp input
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&newChirp); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error decoding request", err)
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
@@ -75,7 +76,8 @@ func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 	// save to database
 	result, err := cfg.queries.CreateChirp(context.Background(), params)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error creating chirp", err)
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
