@@ -150,6 +150,40 @@ func (cfg *apiConfig) handlerGetChirpByID(w http.ResponseWriter, r *http.Request
 	respondWithJSON(w, http.StatusOK, chirp)
 }
 
+func (cfg *apiConfig) handlerDeleteChirp(w http.ResponseWriter, r *http.Request) {
+	// validate JWT
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "invalid or expired access token", err)
+		return
+	}
+	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "invalid or expired access token", err)
+		return
+	}
+
+	chirpID, err := uuid.Parse(r.PathValue("chirpID"))
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "", err)
+		return
+	}
+	chirpToDelete, err := cfg.queries.GetChirpByID(context.Background(), chirpID)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "", err)
+	}
+	if chirpToDelete.UserID != userID {
+		respondWithError(w, http.StatusForbidden, "no permission", nil)
+		return
+	}
+
+	if err = cfg.queries.DeleteChirpByID(context.Background(), chirpToDelete.ID); err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error processing request", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // finds banned words in message
 // replaces banned words with "****"
 // returns new message

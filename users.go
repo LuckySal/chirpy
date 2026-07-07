@@ -159,28 +159,15 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 
 // generate new access token for current user
 func (cfg *apiConfig) handlerRefresh(w http.ResponseWriter, r *http.Request) {
-	// get refresh token from request header
-	refreshToken, err := auth.GetBearerToken(r.Header)
+	// validate refresh token
+	userID, err := validateRefreshToken(cfg, r)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "invalid or expired refresh token", err)
-		return
-	}
-
-	// get user from database
-	user, err := cfg.queries.GetUserFromRefreshToken(context.Background(), refreshToken)
-	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "invalid or expired refresh token", err)
-		return
-	}
-
-	// check refresh token status
-	if user.ExpiresAt.Before(time.Now()) || user.RevokedAt.Valid {
-		respondWithError(w, http.StatusUnauthorized, "invalid or expired refresh token", err)
+		respondWithError(w, http.StatusUnauthorized, err.Error(), err)
 		return
 	}
 
 	// generate new access token
-	accessToken, err := auth.MakeJWT(user.ID, cfg.jwtSecret)
+	accessToken, err := auth.MakeJWT(userID, cfg.jwtSecret)
 	if err != nil {
 		log.Println(err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -201,19 +188,145 @@ func (cfg *apiConfig) handlerRefresh(w http.ResponseWriter, r *http.Request) {
 
 // revoke refresh token
 func (cfg *apiConfig) handlerRevoke(w http.ResponseWriter, r *http.Request) {
+	// custom error
+	tokenError := &TokenError{Message: "invalid or expired refresh token"}
+
 	// get token from request header
 	refreshToken, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "invalid or expired refresh token", err)
+		respondWithError(w, http.StatusUnauthorized, tokenError.Error(), err)
 		return
 	}
 
 	// revoke refresh token
 	if err := cfg.queries.RevokeRefreshToken(context.Background(), refreshToken); err != nil {
-		respondWithError(w, http.StatusUnauthorized, "invalid or expired refresh token", err)
+		respondWithError(w, http.StatusUnauthorized, tokenError.Error(), err)
 		return
 	}
 
 	// success
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// update user email & password
+func (cfg *apiConfig) handlerUpdateUser(w http.ResponseWriter, r *http.Request) {
+	// validate JWT
+	user, err := validateAccessToken(cfg, r)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, err.Error(), err)
+		return
+	}
+
+	// decode request body
+	type UpdateRequest struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	var updateRequest UpdateRequest
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&updateRequest); err != nil {
+		log.Println(err)
+		w.WriteHeader(500)
+		return
+	}
+
+	if updateRequest.Email == "" || updateRequest.Password == "" {
+		respondWithError(w, http.StatusBadRequest, "requires username and password", nil)
+		return
+	}
+
+	// create new user parameters
+	hashedPassword, err := auth.HashPassword(updateRequest.Password)
+	if err != nil {
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	params := database.UpdateUserInfoParams{
+		ID:             user.ID,
+		Email:          updateRequest.Email,
+		HashedPassword: hashedPassword,
+	}
+	newUser, err := cfg.queries.UpdateUserInfo(context.Background(), params)
+	if err != nil {
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	// respond with user information
+	userInfo := struct {
+		ID        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Email     string    `json:"email"`
+	}{
+		ID:        newUser.ID,
+		CreatedAt: newUser.CreatedAt,
+		UpdatedAt: newUser.UpdatedAt,
+		Email:     newUser.Email,
+	}
+	respondWithJSON(w, http.StatusOK, userInfo)
+}
+
+// check for a valid access token
+// return user_id if valid
+func validateAccessToken(cfg *apiConfig, r *http.Request) (database.User, error) {
+	// custom error for invalid access token
+	tokenError := &TokenError{Message: "invalid or expired access token"}
+
+	// get auth token from request header
+	accessToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		log.Println(err)
+		return database.User{}, tokenError
+	}
+
+	// validate access token
+	userID, err := auth.ValidateJWT(accessToken, cfg.jwtSecret)
+	if err != nil {
+		log.Println(err)
+		return database.User{}, tokenError
+	}
+
+	// get user from database
+	user, err := cfg.queries.GetUserByID(context.Background(), userID)
+	if err != nil {
+		log.Println(err)
+		return database.User{}, tokenError
+	}
+
+	//return user
+	return user, nil
+}
+
+// check for a valid refresh token
+// return user_id if valid
+func validateRefreshToken(cfg *apiConfig, r *http.Request) (uuid.UUID, error) {
+	// custom error for invalid refresh token
+	tokenError := &TokenError{Message: "invalid or expired refresh token"}
+
+	// get refresh token from request header
+	refreshToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		return uuid.Nil, tokenError
+	}
+
+	// get user ID for refresh token
+	user, err := cfg.queries.GetUserFromRefreshToken(context.Background(), refreshToken)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	// check expiration
+	if user.ExpiresAt.Before(time.Now()) || user.RevokedAt.Valid {
+		return uuid.Nil, tokenError
+	}
+
+	// return user ID
+	return user.ID, nil
+}
+
+type TokenError struct{ Message string }
+
+func (e *TokenError) Error() string { return e.Message }
