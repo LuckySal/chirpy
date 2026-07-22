@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/luckysal/chirpy/internal/auth"
 )
 
 // handle webhooks requests
@@ -29,7 +30,14 @@ func (cfg *apiConfig) handlerWebhooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// check for authorization
+	apiKey, err := auth.GetAPIKey(r.Header)
+	if err != nil || apiKey != cfg.polkaKey{
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
 
+	// handle event
 	switch req.Event {
 	// upgrade user to "Chirpy Red"
 	case "user.upgraded":
@@ -45,7 +53,7 @@ func (cfg *apiConfig) handlerWebhooks(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return
-		
+
 	// ignore undefined requests
 	default:
 		w.WriteHeader(http.StatusNoContent)

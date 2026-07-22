@@ -17,6 +17,7 @@ type apiConfig struct {
 	queries        *database.Queries
 	platform       string
 	jwtSecret      string
+	polkaKey       string
 }
 
 func main() {
@@ -26,17 +27,29 @@ func main() {
 
 	// load environment
 	godotenv.Load()
+	env_ok := true
 	dbURL := os.Getenv("DB_URL")
 	if dbURL == "" {
-		log.Fatal("DB_URL must be set")
+		log.Println("DB_URL environment variable is not set")
+		env_ok = false
 	}
 	platform := os.Getenv("PLATFORM")
 	if platform == "" {
-		log.Fatal("PLATFORM must be set")
+		log.Println("PLATFORM environment variable is not set")
+		env_ok = false
 	}
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
-		log.Fatal("JWT_SECRET environment variable is not set")
+		log.Println("JWT_SECRET environment variable is not set")
+		env_ok = false
+	}
+	polkaKey := os.Getenv("POLKA_KEY")
+	if polkaKey == "" {
+		log.Println("POLKA_KEY environment variable is not set")
+		env_ok = false
+	}
+	if !env_ok {
+		os.Exit(1)
 	}
 
 	// connect to database
@@ -47,7 +60,7 @@ func main() {
 	dbQueries := database.New(db)
 
 	// create config struct
-	cfg := apiConfig{fileserverHits: atomic.Int32{}, queries: dbQueries, platform: platform, jwtSecret: jwtSecret}
+	cfg := apiConfig{fileserverHits: atomic.Int32{}, queries: dbQueries, platform: platform, jwtSecret: jwtSecret, polkaKey: polkaKey}
 
 	// register endpoints
 	mux := http.NewServeMux()
