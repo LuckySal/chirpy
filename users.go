@@ -1,11 +1,11 @@
 package main
 
 import (
-	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,8 +24,7 @@ func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) 
 	var user newUser
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&user); err != nil {
-		log.Println(err)
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
@@ -46,9 +45,9 @@ func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) 
 
 	// create database entry for user
 	params := database.CreateUserParams{Email: user.Email, HashedPassword: pwd}
-	result, err := cfg.queries.CreateUser(context.Background(), params)
+	result, err := cfg.queries.CreateUser(r.Context(), params)
 	if err != nil {
-		if strings.Contains(err.Error(), "duplicate key") {
+		if errors.Is(err, sql.ErrNoRows) {
 			respondWithError(w, http.StatusBadRequest, "Email taken, use a different email", err)
 			return
 		}
@@ -88,8 +87,7 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 	// decode login request
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&loginRequest); err != nil {
-		log.Println(err)
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	if loginRequest.Email == "" || loginRequest.Password == "" {
@@ -98,9 +96,9 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// retrieve user from database
-	user, err := cfg.queries.GetUserByEmail(context.Background(), loginRequest.Email)
+	user, err := cfg.queries.GetUserByEmail(r.Context(), loginRequest.Email)
 	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
+		if errors.Is(err, sql.ErrNoRows) {
 			respondWithError(w, http.StatusUnauthorized, "incorrect username or password", err)
 		} else {
 			log.Println(err)
@@ -130,7 +128,7 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 
 	// generate refresh token
 	refreshToken, err := cfg.queries.CreateRefreshToken(
-		context.Background(),
+		r.Context(),
 		database.CreateRefreshTokenParams{
 			Token:  auth.MakeRefreshToken(),
 			UserID: user.ID,
@@ -192,19 +190,16 @@ func (cfg *apiConfig) handlerRefresh(w http.ResponseWriter, r *http.Request) {
 
 // revoke refresh token
 func (cfg *apiConfig) handlerRevoke(w http.ResponseWriter, r *http.Request) {
-	// custom error
-	tokenError := &TokenError{Message: "invalid or expired refresh token"}
-
 	// get token from request header
 	refreshToken, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, tokenError.Error(), err)
+		respondWithError(w, http.StatusUnauthorized, "invalid or expired refresh token", err)
 		return
 	}
 
 	// revoke refresh token
-	if err := cfg.queries.RevokeRefreshToken(context.Background(), refreshToken); err != nil {
-		respondWithError(w, http.StatusUnauthorized, tokenError.Error(), err)
+	if err := cfg.queries.RevokeRefreshToken(r.Context(), refreshToken); err != nil {
+		respondWithError(w, http.StatusUnauthorized, "invalid or expired refresh token", err)
 		return
 	}
 
@@ -251,7 +246,7 @@ func (cfg *apiConfig) handlerUpdateUser(w http.ResponseWriter, r *http.Request) 
 		Email:          updateRequest.Email,
 		HashedPassword: hashedPassword,
 	}
-	newUser, err := cfg.queries.UpdateUserInfo(context.Background(), params)
+	newUser, err := cfg.queries.UpdateUserInfo(r.Context(), params)
 	if err != nil {
 		log.Println(err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -278,28 +273,25 @@ func (cfg *apiConfig) handlerUpdateUser(w http.ResponseWriter, r *http.Request) 
 // check for a valid access token
 // return user_id if valid
 func validateAccessToken(cfg *apiConfig, r *http.Request) (database.User, error) {
-	// custom error for invalid access token
-	tokenError := &TokenError{Message: "invalid or expired access token"}
-
 	// get auth token from request header
 	accessToken, err := auth.GetBearerToken(r.Header)
 	if err != nil {
 		log.Println(err)
-		return database.User{}, tokenError
+		return database.User{}, errors.New("invalid or expired access token")
 	}
 
 	// validate access token
 	userID, err := auth.ValidateJWT(accessToken, cfg.jwtSecret)
 	if err != nil {
 		log.Println(err)
-		return database.User{}, tokenError
+		return database.User{}, errors.New("invalid or expired access token")
 	}
 
 	// get user from database
-	user, err := cfg.queries.GetUserByID(context.Background(), userID)
+	user, err := cfg.queries.GetUserByID(r.Context(), userID)
 	if err != nil {
 		log.Println(err)
-		return database.User{}, tokenError
+		return database.User{}, errors.New("invalid or expired access token")
 	}
 
 	//return user
@@ -309,30 +301,23 @@ func validateAccessToken(cfg *apiConfig, r *http.Request) (database.User, error)
 // check for a valid refresh token
 // return user_id if valid
 func validateRefreshToken(cfg *apiConfig, r *http.Request) (uuid.UUID, error) {
-	// custom error for invalid refresh token
-	tokenError := &TokenError{Message: "invalid or expired refresh token"}
-
 	// get refresh token from request header
 	refreshToken, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		return uuid.Nil, tokenError
+		return uuid.Nil, errors.New("invalid or expired refresh token")
 	}
 
 	// get user ID for refresh token
-	user, err := cfg.queries.GetUserFromRefreshToken(context.Background(), refreshToken)
+	user, err := cfg.queries.GetUserFromRefreshToken(r.Context(), refreshToken)
 	if err != nil {
 		return uuid.Nil, err
 	}
 
 	// check expiration
 	if user.ExpiresAt.Before(time.Now()) || user.RevokedAt.Valid {
-		return uuid.Nil, tokenError
+		return uuid.Nil, errors.New("invalid or expired refresh token")
 	}
 
 	// return user ID
 	return user.ID, nil
 }
-
-type TokenError struct{ Message string }
-
-func (e *TokenError) Error() string { return e.Message }

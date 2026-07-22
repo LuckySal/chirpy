@@ -111,15 +111,25 @@ func (q *Queries) ResetUsers(ctx context.Context) error {
 	return err
 }
 
-const setUserRed = `-- name: SetUserRed :exec
+const setUserRed = `-- name: SetUserRed :one
 UPDATE users
 SET is_chirpy_red = true, updated_at = NOW()
 WHERE id = $1
+RETURNING id, created_at, updated_at, email, hashed_password, is_chirpy_red
 `
 
-func (q *Queries) SetUserRed(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.ExecContext(ctx, setUserRed, id)
-	return err
+func (q *Queries) SetUserRed(ctx context.Context, id uuid.UUID) (User, error) {
+	row := q.db.QueryRowContext(ctx, setUserRed, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Email,
+		&i.HashedPassword,
+		&i.IsChirpyRed,
+	)
+	return i, err
 }
 
 const updateUserInfo = `-- name: UpdateUserInfo :one

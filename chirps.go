@@ -1,8 +1,9 @@
 package main
 
 import (
-	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
@@ -51,8 +52,7 @@ func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 	var newChirp input
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&newChirp); err != nil {
-		log.Println(err)
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
@@ -74,7 +74,7 @@ func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// save to database
-	result, err := cfg.queries.CreateChirp(context.Background(), params)
+	result, err := cfg.queries.CreateChirp(r.Context(), params)
 	if err != nil {
 		log.Println(err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -94,8 +94,8 @@ func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 }
 
 // get all chirps from database
-func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, _ *http.Request) {
-	dbChirps, err := cfg.queries.GetChirps(context.Background())
+func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
+	dbChirps, err := cfg.queries.GetChirps(r.Context())
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to load chirps from database", err)
 		return
@@ -128,9 +128,9 @@ func (cfg *apiConfig) handlerGetChirpByID(w http.ResponseWriter, r *http.Request
 	}
 
 	// retreive chirp from database
-	dbChirp, err := cfg.queries.GetChirpByID(context.Background(), chirpID)
+	dbChirp, err := cfg.queries.GetChirpByID(r.Context(), chirpID)
 	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
+		if errors.Is(err, sql.ErrNoRows) {
 			respondWithError(w, http.StatusNotFound, "Chirp not found", err)
 		} else {
 			respondWithError(w, http.StatusInternalServerError, "Error getting chirp", err)
@@ -168,7 +168,7 @@ func (cfg *apiConfig) handlerDeleteChirp(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusNotFound, "", err)
 		return
 	}
-	chirpToDelete, err := cfg.queries.GetChirpByID(context.Background(), chirpID)
+	chirpToDelete, err := cfg.queries.GetChirpByID(r.Context(), chirpID)
 	if err != nil {
 		respondWithError(w, http.StatusNotFound, "", err)
 	}
@@ -177,7 +177,7 @@ func (cfg *apiConfig) handlerDeleteChirp(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err = cfg.queries.DeleteChirpByID(context.Background(), chirpToDelete.ID); err != nil {
+	if err = cfg.queries.DeleteChirpByID(r.Context(), chirpToDelete.ID); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "error processing request", err)
 		return
 	}
