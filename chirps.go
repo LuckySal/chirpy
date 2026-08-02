@@ -95,10 +95,33 @@ func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 
 // get all chirps from database
 func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
-	dbChirps, err := cfg.queries.GetChirps(r.Context())
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to load chirps from database", err)
-		return
+	userID := r.URL.Query().Get("author_id")
+
+	dbChirps := []database.Chirp{}
+	var err error
+
+	if userID != "" {
+		parsedID, err := uuid.Parse(userID)
+		if err != nil {
+			respondWithError(w, http.StatusBadRequest, "invalid author_id", err)
+			return
+		}
+		dbChirps, err = cfg.queries.GetChirpsByUser(r.Context(), parsedID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				respondWithError(w, http.StatusNotFound, "no results", err)
+				return
+			} else {
+				respondWithError(w, http.StatusInternalServerError, "Failed to load chirps from database", err)
+				return
+			}
+		}
+	} else {
+		dbChirps, err = cfg.queries.GetChirps(r.Context())
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, "Failed to load chirps from database", err)
+			return
+		}
 	}
 
 	// convert to json formatted structs
