@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -96,6 +97,7 @@ func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 // get all chirps from database
 func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("author_id")
+	sortOrder := r.URL.Query().Get("sort")
 
 	dbChirps := []database.Chirp{}
 	var err error
@@ -122,6 +124,10 @@ func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 			respondWithError(w, http.StatusInternalServerError, "Failed to load chirps from database", err)
 			return
 		}
+	}
+
+	if sortOrder == "desc" {
+		slices.Reverse(dbChirps)
 	}
 
 	// convert to json formatted structs
